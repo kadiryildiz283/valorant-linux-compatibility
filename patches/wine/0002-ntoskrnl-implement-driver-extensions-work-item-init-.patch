@@ -457,7 +457,7 @@ index 2183df3..fef95f9 100644
  static void CALLBACK ke_timer_complete_proc(PTP_CALLBACK_INSTANCE instance, void *timer_, PTP_TIMER tp_timer)
  {
      KTIMER *timer = timer_;
-@@ -1450,3 +1486,152 @@ KDEVICE_QUEUE_ENTRY *WINAPI KeRemoveDeviceQueue( KDEVICE_QUEUE *queue )
+@@ -1450,3 +1486,151 @@ KDEVICE_QUEUE_ENTRY *WINAPI KeRemoveDeviceQueue( KDEVICE_QUEUE *queue )
  
      return entry;
  }
@@ -609,7 +609,6 @@ index 2183df3..fef95f9 100644
 +    TRACE( "push_lock %p, flags %#lx.\n", push_lock, flags );
 +    ReleaseSRWLockExclusive( (SRWLOCK *)push_lock );
 +}
-+
 -- 
 2.56.0
 
