@@ -1,0 +1,65 @@
+From 8fce02400e839505b3ccade8fcd21fafd8be3290 Mon Sep 17 00:00:00 2001
+From: Kadir <kadir@cachyos>
+Date: Thu, 15 Oct 2026 14:30:58 +0300
+Subject: [PATCH] server: Respect reported_events for AFD_POLL_WRITE in poll_socket to prevent busy-spin
+
+In Windows Winsock/AFD, FD_WRITE / AFD_POLL_WRITE follows edge-triggered
+semantics: it is signaled upon connection establishment or when buffer space
+becomes available following a blocked send (WSAEWOULDBLOCK /
+STATUS_DEVICE_NOT_READY).
+
+In Wine's server/sock.c, while sock->reported_events already tracks reported
+state for WSAEventSelect and clears AFD_POLL_WRITE upon a failed send,
+IOCTL_AFD_POLL (poll_socket) unconditionally queried Linux poll() for POLLOUT
+and completed immediately with AFD_POLL_WRITE whenever the socket send buffer
+had space. For connectionless (UDP) sockets or connected sockets where the
+application polls in a loop, this caused an unthrottled busy loop (exceeding
+53,000 syscalls/sec), saturating wineserver and starving the application.
+
+This patch:
+1. Prevents requesting POLLOUT in poll_flags_from_afd if AFD_POLL_WRITE was
+   already reported and has not been cleared by a failed send.
+2. Prevents setting AFD_POLL_WRITE in get_poll_flags if already reported.
+3. Sets AFD_POLL_WRITE in sock->reported_events when completing an AFD poll
+   that reports write readiness.
+
+Signed-off-by: Kadir <kadir@cachyos>
+---
+ server/sock.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/server/sock.c b/server/sock.c
+index caa32a3..70f9043 100644
+--- a/server/sock.c
++++ b/server/sock.c
+@@ -1121,7 +1121,7 @@ static int get_poll_flags( struct sock *sock, int event )
+     }
+     if (event & POLLPRI)
+         flags |= is_oobinline( sock ) ? AFD_POLL_READ : AFD_POLL_OOB;
+-    if (event & POLLOUT)
++    if ((event & POLLOUT) && !(sock->reported_events & AFD_POLL_WRITE))
+         flags |= AFD_POLL_WRITE;
+     if (sock->state == SOCK_CONNECTED)
+         flags |= AFD_POLL_CONNECT;
+@@ -1145,6 +1145,9 @@ static void complete_async_poll( struct poll_req *req, unsigned int status )
+ 
+         if (sock->main_poll == req)
+             sock->main_poll = NULL;
++
++        if (req->sockets[i].flags & AFD_POLL_WRITE)
++            sock->reported_events |= AFD_POLL_WRITE;
+     }
+ 
+     if (!status)
+@@ -1511,7 +1514,7 @@ static int poll_flags_from_afd( struct sock *sock, int flags )
+         ev |= POLLIN;
+     if (flags & AFD_POLL_OOB)
+         ev |= is_oobinline( sock ) ? POLLIN : POLLPRI;
+-    if (flags & AFD_POLL_WRITE)
++    if ((flags & AFD_POLL_WRITE) && !(sock->reported_events & AFD_POLL_WRITE))
+         ev |= POLLOUT;
+ 
+     return ev;
+-- 
+2.56.0
+
